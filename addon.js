@@ -8,7 +8,7 @@ const MANIFEST = {
   version: '1.0.0',
   name: 'قصة عشق (Qeseh)',
   description: 'Turkish series with Arabic subtitles, scraped from qeseh.net. No IMDB metadata — titles are as published on the site.',
-  logo: 'https://qeseh.net/favicon.ico',
+  logo: 'https://qeseh.net/wp-content/uploads/2026/02/cropped-qeseh2026-192x192.png',
   resources: ['catalog', 'meta', 'stream'],
   types: ['series'],
   idPrefixes: ['qeseh:'],

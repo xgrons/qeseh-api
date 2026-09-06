@@ -1,0 +1,15 @@
+{
+  "name": "qeseh-api",
+  "version": "1.0.0",
+  "description": "Zero-dependency Node.js scraper API for qeseh.net, with a built-in Stremio addon.",
+  "private": true,
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "UNLICENSED"
+}

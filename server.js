@@ -100,7 +100,17 @@ http.createServer(async (req, res) => {
       return json(res, await addon.meta(decodeURIComponent(m[1]), decodeURIComponent(m[2])));
     }
     if ((m = p.match(/^\/stream\/([^/]+)\/([^/]+)\.json$/))) {
-      return json(res, await addon.stream(decodeURIComponent(m[1]), decodeURIComponent(m[2])));
+      return json(res, await addon.stream(decodeURIComponent(m[1]), decodeURIComponent(m[2]), baseUrl(req)));
+    }
+
+    // Media proxy: some CDNs bind their signed HLS URLs to the IP that
+    // resolved them (this server's), so a client playing the raw URL
+    // directly gets a 403. Routing playback through here re-originates
+    // every request (playlist + segments) from this server's IP.
+    if (p === '/px') {
+      const target = u.searchParams.get('u');
+      if (!target) return json(res, { error: 'missing u param' }, 400);
+      return qeseh.proxyMedia(target, u.searchParams.get('r') || '', req, res);
     }
 
     json(res, { error: 'not found' }, 404);

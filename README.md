@@ -45,6 +45,7 @@ Listens on `$PORT` if set, else `8787`. No env vars or secrets are required.
 | `GET /catalog/series/qeseh-latest[/skip=N].json` | Stremio catalog: latest episodes, one row per series |
 | `GET /meta/series/qeseh:SLUG.json` | Stremio meta: series detail + episode list as `videos[]` |
 | `GET /stream/series/qeseh:SLUG:1:N.json` | Stremio streams for episode N (all servers resolved in parallel) |
+| `GET /px?u=URL&r=REFERER` | Media proxy: re-fetches an HLS playlist/segment from this server (see Notes) |
 
 ## Server types
 
@@ -98,6 +99,8 @@ Example dailymotion response:
 - Errors: `400` missing param, `404` unknown route or series/episode not found, `502` upstream/scrape failure.
 - The m3u8 needs a `Referer` header only for the embed pages; the resolved CDN m3u8 plays standalone.
 - The eval-packed embed pages (`eval(function(p,a,c,k,e,d)...)`) are decoded by a pure-JS implementation of the packer algorithm in `unpack.js` — no `eval()` or `vm` is used anywhere, since these pages come from third-party sites not under our control.
+- Some CDNs (observed: Red HD/cdn-centaurus, estream/artrk) bind their signed HLS URLs to the IP that first requested them, so handing the raw `url` to a client on a different network returns 403. The Stremio addon works around this by routing every playable stream through `/px?u=<url>&r=<referer>`, which re-fetches the playlist (rewriting every segment reference to also go through `/px`) and streams segments from this server's own IP. This means Stremio playback traffic flows through this Render instance, not directly from the CDN — fine for personal use, but worth knowing if you're watching from multiple devices at once on a free instance's bandwidth. The plain `/series/.../stream` API still returns the raw direct CDN URL as documented; use `?raw=1` there if you need a guaranteed-working proxy instead.
+- Dailymotion's "auto" master occasionally comes back with fewer quality renditions than it actually has (an upstream flakiness, confirmed by re-fetching the same signed URL repeatedly). `resolveStream` retries up to 3 times and keeps the best result, which reliably recovers the full (usually 1080p) variant set.
 
 ## Hosting for free (Render)
 
@@ -109,7 +112,7 @@ This runs well on [Render](https://render.com)'s free web service tier: a real a
 4. **Free-tier caveat:** Render spins a free web service down after 15 minutes with no inbound traffic, and the next request pays a ~30–60s cold start. To keep it warm, add a free external pinger (e.g. [cron-job.org](https://cron-job.org) or UptimeRobot) hitting `GET /` every 10 minutes — well under the 750 free instance-hours/month. This is a workaround, not something Render guarantees; a paid instance is the only way to avoid the spin-down entirely.
 5. On boot the server also crawls `/series` once in the background, so the catalog is warm before the first real hit lands.
 
-If qeseh.net or the embed hosts ever block Render's datacenter IPs (403 / Cloudflare challenge from routes that work locally), that's an upstream IP-reputation issue, not a bug in this code — there's no built-in proxy support.
+If qeseh.net or the embed hosts ever block Render's datacenter IPs entirely (403 / Cloudflare challenge on routes that work locally), that's a different, harder problem than the per-CDN IP-locking `/px` solves — there's no general-purpose outbound proxy built in for that case.
 
 ## Stremio addon
 

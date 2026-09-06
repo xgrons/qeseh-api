@@ -129,7 +129,16 @@ async function meta(type, id) {
 const STREAM_CONCURRENCY = 4;
 const STREAM_BUDGET_MS = 20000;
 
-async function stream(type, id) {
+// Signed HLS URLs from these embed hosts are fetched via the same Referer
+// our own server used to resolve them; dailymotion's CDN needs no Referer
+// (only a UA, which the proxy always sends).
+const EMBED_REFERER = 'https://qesen.net/';
+
+function proxied(base, rawUrl, referer) {
+  return base + '/px?u=' + encodeURIComponent(rawUrl) + (referer ? '&r=' + encodeURIComponent(referer) : '');
+}
+
+async function stream(type, id, base) {
   const parsed = parseQeshId(id);
   if (!parsed || type !== 'series' || parsed.episode == null) throw new qeseh.NotFoundError('not a qeseh episode id: ' + id);
   const ep = await qeseh.episodeDetail(parsed.slug, parsed.episode);
@@ -161,10 +170,14 @@ async function stream(type, id) {
   // Keep SERVER_PRIORITY order among whatever resolved in time.
   resolved.sort((a, b) => resolvable.indexOf(a.srv) - resolvable.indexOf(b.srv));
 
+  // Some of these CDNs bind the signed URL to the IP that resolved it (this
+  // server's), so handing the raw URL to a client on a different IP 403s.
+  // Routing through our own /px proxy re-originates every request from
+  // this server's IP, so playback works regardless of the client's network.
   const streams = resolved.map(({ srv, r }) => ({
     name: 'Qeseh',
     title: srv.name + (r.resolution ? ' • ' + r.resolution : ''),
-    url: r.url,
+    url: proxied(base, r.url, r.dm ? '' : EMBED_REFERER),
     behaviorHints: { notWebReady: true, bingeGroup: 'qeseh-' + qeseh.norm(srv.name) },
   }));
 

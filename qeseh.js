@@ -45,10 +45,19 @@ function cacheSet(key, v, ttl) {
   cache.set(key, { exp: Date.now() + ttl, v });
 }
 
-async function cached(key, ttl, fn) {
+// `swr: false` disables stale-serving for entries where an expired value
+// isn't just "a bit outdated" but actively wrong — e.g. a signed URL whose
+// upstream degrades (200 with fewer variants) rather than erroring once its
+// token ages out. Those callers must always re-fetch on expiry.
+async function cached(key, ttl, fn, { swr = true } = {}) {
   const c = cache.get(key);
   if (c) {
     if (c.exp > Date.now()) return c.v;
+    if (!swr) {
+      const v = await fn();
+      cacheSet(key, v, ttl);
+      return v;
+    }
     // Stale: serve immediately, refresh in the background (deduped).
     if (!c.refreshing) {
       c.refreshing = true;
@@ -170,7 +179,7 @@ async function dailymotionMaster(code) {
   return master;
 }
 async function dailymotionStream(code) {
-  let master = await cached('dm:meta:' + code, 60e3, () => dailymotionMaster(code));
+  let master = await cached('dm:meta:' + code, 60e3, () => dailymotionMaster(code), { swr: false });
   try {
     return { master, body: await (await dmFetch(master)).text() };
   } catch {
@@ -261,8 +270,18 @@ async function resolveStream(slug, n, serverName) {
   }
   if (!srv.url) return { error: 'unknown server type', server: srv.name };
   if (srv.type === 'dailymotion') {
-    const { master, body } = await dailymotionStream(srv.id);
-    const best = pickBestVariant(body, master);
+    // The upstream "auto" master occasionally comes back with fewer
+    // renditions than it actually has (observed empirically: the same
+    // master URL fetched again a moment later reliably has the full set),
+    // so keep the best of up to 3 attempts rather than trusting the first.
+    let best = null, master = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await dailymotionStream(srv.id);
+      master = r.master;
+      const candidate = pickBestVariant(r.body, r.master);
+      if (candidate && (!best || candidate.w * candidate.h > best.w * best.h)) best = candidate;
+      if (best && best.h >= 1080) break; // good enough, stop early
+    }
     const out = { server: srv.name, type: 'hls', dm: true, master, embed: srv.url };
     if (best) { out.url = best.url; out.resolution = best.w + 'x' + best.h; }
     else out.url = master;
@@ -287,11 +306,81 @@ async function resolveStream(slug, n, serverName) {
   return out;
 }
 
+// ---------- media proxy ----------
+// Some of these CDNs (observed: Red HD/cdn-centaurus, estream/artrk) bind
+// their signed HLS URLs to the IP that first requested them. Since we
+// resolve server-side (from this host's IP), a client fetching the raw URL
+// directly gets a 403 from a different IP — that's exactly what breaks
+// playback in a real client. Routing playback through this proxy makes every
+// request (playlist + every segment) originate from this server's IP again.
+function rewritePlaylist(body, baseUrl, referer) {
+  const refParam = referer ? '&r=' + encodeURIComponent(referer) : '';
+  const toProxied = (raw) => {
+    let abs;
+    try { abs = new URL(raw, baseUrl).href; } catch { return null; }
+    return '/px?u=' + encodeURIComponent(abs) + refParam;
+  };
+  return body.split(/\r?\n/).map(line => {
+    const t = line.trim();
+    if (!t) return line;
+    if (t.startsWith('#')) {
+      // Rewrite any embedded URI="..." (e.g. #EXT-X-KEY) so encrypted VOD still works.
+      return line.replace(/URI="([^"]+)"/, (m0, u) => {
+        const p = toProxied(u);
+        return p ? `URI="${p}"` : m0;
+      });
+    }
+    return toProxied(t) || line;
+  }).join('\n');
+}
+
+// Streams the proxied response directly onto `res` (writes headers + body
+// itself); server.js just hands off the request and returns.
+async function proxyMedia(target, referer, req, res) {
+  const headers = { 'User-Agent': UA };
+  if (referer) headers.Referer = referer;
+  const controller = new AbortController();
+  req.on('close', () => controller.abort());
+
+  let upstream;
+  try {
+    upstream = await fetch(target, { headers, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]) });
+  } catch (e) {
+    res.writeHead(502, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'text/plain' });
+    return res.end('proxy fetch failed: ' + e.message);
+  }
+  if (!upstream.ok) {
+    res.writeHead(upstream.status, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'text/plain' });
+    return res.end('upstream HTTP ' + upstream.status);
+  }
+
+  const ct = upstream.headers.get('content-type') || '';
+  const isPlaylist = /\.m3u8(\?|$)/.test(target) || /mpegurl/i.test(ct);
+  if (isPlaylist) {
+    const body = await upstream.text();
+    const rewritten = rewritePlaylist(body, target, referer);
+    const buf = Buffer.from(rewritten);
+    res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Access-Control-Allow-Origin': '*', 'Content-Length': buf.length });
+    return res.end(buf);
+  }
+
+  // Binary passthrough (segments) — stream without buffering the whole file.
+  const respHeaders = { 'Content-Type': ct || 'video/MP2T', 'Access-Control-Allow-Origin': '*' };
+  const len = upstream.headers.get('content-length');
+  if (len) respHeaders['Content-Length'] = len;
+  res.writeHead(200, respHeaders);
+  const { Readable } = require('node:stream');
+  const nodeStream = Readable.fromWeb(upstream.body);
+  nodeStream.on('error', () => { try { res.end(); } catch {} });
+  res.on('close', () => nodeStream.destroy());
+  nodeStream.pipe(res);
+}
+
 module.exports = {
   SITE, UA,
   get, cached, cache,
   SERVERS, SERVER_PRIORITY, norm, pickServer, serverInfo,
   listSeries, seriesDetail, search, latest, episodeDetail, resolveStream,
-  dmFetch,
+  dmFetch, proxyMedia,
   NotFoundError,
 };

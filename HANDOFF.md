@@ -17,9 +17,11 @@ updated: 2026-09-06
 - Verified locally end-to-end: all original API routes (`/`, `/series`, `/series/:slug`, episode detail, stream auto-pick, `?server=dailymotion`, `?raw=1`) produce identical shapes to before the refactor; all new Stremio routes (`/manifest.json`, both catalogs incl. search-via-extra and `skip` pagination, `/meta/...`, `/stream/...`) return valid, populated JSON; 404s confirmed on both a real upstream 404 and a route mismatch.
 
 ## Now
-1. Not yet done: actually push to GitHub + deploy to Render (needs the user's GitHub/Render accounts — no `gh` CLI auth available in this environment). The egress-IP probe (does qeseh.net/embed hosts block Render's datacenter IPs?) can only be run once deployed.
-2. Not yet done: set up the external keep-alive pinger (cron-job.org/UptimeRobot) once a live Render URL exists.
-3. Not yet done: install the addon in a real Stremio client and confirm end-to-end playback (only curl-level protocol checks were run locally).
+1. Done: pushed to GitHub (`xgrons/qeseh-api`, public, `main` branch) via a user-supplied classic PAT (repo scope), then deployed to Render via API using a user-supplied Render API key. Live at https://qeseh-api.onrender.com (service `srv-daepqnnqj5pc73aeuibg`). Egress-IP probe passed: qeseh.net, the HLS embed hosts, and dailymotion all respond normally from Render's IP — no blocking observed.
+2. Done: cron-job.org keep-alive job created via API (job `8395487`, user-supplied API key), GET `/` every 10 minutes, UTC, enabled.
+3. Not yet done: install the addon in a real Stremio client and confirm end-to-end playback (only curl-level protocol checks were run, both locally and against the live Render URL — all Stremio routes returned valid populated JSON).
+
+All three GitHub/Render/cron-job.org credentials used above were supplied by the user in-chat for this one-time setup and were not stored anywhere (not in the repo, not in memory). The user was advised to revoke/regenerate them after setup if they want.
 
 ## Files
 - `server.js` — HTTP routing only, both plain API and Stremio routes, `$PORT`.

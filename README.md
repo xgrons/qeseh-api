@@ -2,6 +2,14 @@
 
 Zero-dependency Node.js scraper API for [qeseh.net](https://qeseh.net) (قصة عشق, Turkish series/episodes, Arabic subtitles), with a built-in Stremio addon served from the same process.
 
+## Live deployment
+
+- API: https://qeseh-api.onrender.com
+- Stremio manifest: https://qeseh-api.onrender.com/manifest.json
+- Stremio install link: `stremio://qeseh-api.onrender.com/manifest.json`
+
+Hosted free on Render (`srv-daepqnnqj5pc73aeuibg`), kept awake by a cron-job.org job (`8395487`) pinging `/` every 10 minutes.
+
 ## Files
 
 | File | Role |
